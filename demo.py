@@ -93,25 +93,55 @@ def get_embeddings(prompt, db_path, collection_name, top_n=5):
 # ---------------------------------------------------------------------
 # 5) QUERY REFINEMENT (MULTI-QUERY / QUERY FUSION)
 # ---------------------------------------------------------------------
+import ollama
+
 def refine_query(original_query, model="llama3.2"):
     """
-    Use the LLM to rewrite an ambiguous or shorthand query into a more specific query.
+    A general multi-step LLM approach (no dictionaries).
+    Use chain-of-thought style reasoning + a final rewrite
+    to transform short, ambiguous queries into more precise ones.
+
+    Phase A: Let the LLM reason about possible expansions for the user query.
+    Phase B: Ask it to produce a single refined query with no disclaimers.
     """
-    refinement_prompt = (
-        f"You are a helpful AI that refines vague or shorthand queries.\n"
-        f"The user query is: '{original_query}'\n\n"
-        f"1. If the query is an abbreviation (e.g., 'bg'), expand it.\n"
-        f"2. If it's a vague term (e.g., 'background'), clarify its intent.\n"
-        f"3. If the query is already clear, return it unchanged.\n\n"
-        f"Rewrite the query now:"
+    # ----------------------
+    # PHASE A: Reasoning Prompt
+    # ----------------------
+    reasoning_prompt = (
+        "We have a short or ambiguous user query:\n"
+        f"'{original_query}'\n\n"
+        "Step-by-step, consider potential expansions, synonyms, or clarifications.\n"
+        "Examples: if the query is 'info', possible expansions could be 'information', 'additional info', etc.\n"
+        "If the query is 'bg', expansions might be 'background', 'background context', etc.\n"
+        "If the query is 'fin', expansions might be 'finance', 'financial data', etc.\n"
+        "\n"
+        "List these possibilities or your chain-of-thought reasoning, and end with a short summary.\n"
     )
 
-    response = ollama.chat(
+    reasoning_response = ollama.chat(
         model=model,
-        messages=[{'role': 'user', 'content': refinement_prompt}]
+        messages=[{"role": "user", "content": reasoning_prompt}],
     )
-    refined_query = response['message']['content'].strip()
-    return refined_query
+    reasoning_text = reasoning_response["message"]["content"]
+
+    # ----------------------
+    # PHASE B: Rewrite Prompt
+    # ----------------------
+    rewrite_prompt = (
+        "Based on the following reasoning:\n\n"
+        f"{reasoning_text}\n\n"
+        "Now produce ONE refined query (a single line) that best captures the user's intent. "
+        "Do not add disclaimers, greetings, or extra text. Only provide the final refined query.\n"
+    )
+
+    rewrite_response = ollama.chat(
+        model=model,
+        messages=[{"role": "user", "content": rewrite_prompt}],
+    )
+
+    final_refined = rewrite_response["message"]["content"].strip()
+    return final_refined
+
 
 # ---------------------------------------------------------------------
 # 6) FINAL LLM RESPONSE (RAG ANSWER)
