@@ -3,7 +3,6 @@ import sys
 import pandas as pd
 import ollama
 import chromadb
-from chromadb.utils import embedding_functions
 
 # ---------------------------------------------------------------------
 # 1) READ EXCEL DATA
@@ -84,10 +83,7 @@ def get_embeddings(prompt, db_path, collection_name, top_n=5):
         query_embeddings=[query_vector],
         n_results=top_n
     )
-    # Extract results
-    # dbResponse has keys: ["ids", "embeddings", "documents", "metadatas"]
     
-    # Let's format them neatly:
     matched_docs = []
     for i in range(len(dbResponse["documents"][0])):  # how many results
         doc_text   = dbResponse["documents"][0][i]
@@ -111,7 +107,6 @@ def answer_with_llama(prompt, context, model="llama3.2:latest"):
     Example of how you might call Ollama to generate an answer
     using the retrieved context from the DB as background.
     """
-    # You can build your RAG prompt by combining user question + retrieved docs:
     rag_prompt = (
         f"You are given the following context from a timesheet database:\n\n"
         f"{context}\n\n"
@@ -119,11 +114,9 @@ def answer_with_llama(prompt, context, model="llama3.2:latest"):
         f"Please provide an appropriate answer or summary."
     )
 
-    # Call the llama model via Ollama
     response = ollama.chat(
         model=model,
         prompt=rag_prompt,
-        # Optionally set system messages, etc.
     )
     return response["choices"][0]["text"]
 
@@ -153,8 +146,6 @@ if __name__ == "__main__":
         print()
 
     # 6C) If you want a final LLM-based answer:
-    # Combine top docs into one string:
     combined_context = "\n".join([f"- {d['text']}" for d in results])
-    # Pass to llama3.2
     final_answer = answer_with_llama(user_query, combined_context, model="llama3.2:latest")
     print("LLM Answer:\n", final_answer)
