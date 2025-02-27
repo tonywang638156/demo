@@ -4,9 +4,7 @@ import pandas as pd
 import ollama
 import chromadb
 
-# ---------------------------------------------------------------------
-# 1) READ EXCEL DATA
-# ---------------------------------------------------------------------
+
 def load_timesheet_data(filepath):
     df = pd.read_excel(filepath)
     timesheet_comments = df["trn_desc"].tolist()
@@ -23,12 +21,20 @@ def get_chroma_collection(db_path, collection_name):
     return collection
 
 # ---------------------------------------------------------------------
-# 3) GENERATE DB: EMBED TIMESHEET ROWS AND STORE IN CHROMADB
+# 3) GENERATE DB: EMBED TIMESHEET ROWS AND STORE IN CHROMADB IF NEEDED
 # ---------------------------------------------------------------------
 def generateDB(filepath, db_path, collection_name):
     timesheet_comments, project_codes, project_names = load_timesheet_data(filepath)
     collection = get_chroma_collection(db_path, collection_name)
 
+    # Check if database is already populated
+    existing_ids = collection.get()["ids"]
+    if existing_ids:
+        print("✅ Embeddings already exist in ChromaDB. Skipping embedding process.")
+        return  # Skip processing if data is already stored
+
+    print("🛠 Generating embeddings and storing them in ChromaDB...")
+    
     for i, comment in enumerate(timesheet_comments):
         doc_id = f"row_{i}"
         doc_text = (
@@ -36,12 +42,6 @@ def generateDB(filepath, db_path, collection_name):
             f"Project Code: {project_codes[i]}\n"
             f"Project Name: {project_names[i]}"
         )
-
-        # Check if embedding already exists (avoid duplicates)
-        existing_ids = collection.get(ids=[doc_id])["ids"]
-        if existing_ids:
-            print(f"Skipping existing embedding ID: {doc_id}")
-            continue
 
         # Generate embedding
         embedding_response = ollama.embeddings(model="mxbai-embed-large", prompt=comment)
@@ -58,23 +58,26 @@ def generateDB(filepath, db_path, collection_name):
                 "prj_name": project_names[i]
             }]
         )
-        print(f"Inserted embedding ID: {doc_id}")
+        print(f"📌 Inserted embedding ID: {doc_id}")
 
-    print("✅ Database has been generated/updated.")
+    print("✅ Database has been updated with new embeddings.")
 
 # ---------------------------------------------------------------------
-# 4) QUERY FUNCTION: GET EMBEDDINGS + SEARCH CHROMA
+# 4) QUERY FUNCTION: RETRIEVE EMBEDDINGS FROM CHROMA
 # ---------------------------------------------------------------------
 def get_embeddings(prompt, db_path, collection_name, top_n=5):
     collection = get_chroma_collection(db_path, collection_name)
+    
+    # Generate embedding for user query
     embed_response = ollama.embeddings(model="mxbai-embed-large", prompt=prompt)
     query_vector = embed_response["embedding"]
 
+    # Query ChromaDB for relevant results
     dbResponse = collection.query(
         query_embeddings=[query_vector],
         n_results=top_n
     )
-    
+
     matched_docs = []
     for i in range(len(dbResponse["documents"][0])):
         doc_text   = dbResponse["documents"][0][i]
@@ -91,31 +94,16 @@ def get_embeddings(prompt, db_path, collection_name, top_n=5):
     return matched_docs
 
 # ---------------------------------------------------------------------
-# 5) QUERY REFINEMENT (MULTI-QUERY / QUERY FUSION)
+# 5) QUERY REFINEMENT: HANDLE SHORT OR VAGUE QUERIES
 # ---------------------------------------------------------------------
-import ollama
-
 def refine_query(original_query, model="llama3.2"):
     """
-    A general multi-step LLM approach (no dictionaries).
-    Use chain-of-thought style reasoning + a final rewrite
-    to transform short, ambiguous queries into more precise ones.
-
-    Phase A: Let the LLM reason about possible expansions for the user query.
-    Phase B: Ask it to produce a single refined query with no disclaimers.
+    Uses a multi-step reasoning-based approach to rewrite short or ambiguous queries.
     """
-    # ----------------------
-    # PHASE A: Reasoning Prompt
-    # ----------------------
     reasoning_prompt = (
         "We have a short or ambiguous user query:\n"
         f"'{original_query}'\n\n"
         "Step-by-step, consider potential expansions, synonyms, or clarifications.\n"
-        "Examples: if the query is 'info', possible expansions could be 'information', 'additional info', etc.\n"
-        "If the query is 'bg', expansions might be 'background', 'background context', etc.\n"
-        "If the query is 'fin', expansions might be 'finance', 'financial data', etc.\n"
-        "\n"
-        "List these possibilities or your chain-of-thought reasoning, and end with a short summary.\n"
     )
 
     reasoning_response = ollama.chat(
@@ -124,9 +112,6 @@ def refine_query(original_query, model="llama3.2"):
     )
     reasoning_text = reasoning_response["message"]["content"]
 
-    # ----------------------
-    # PHASE B: Rewrite Prompt
-    # ----------------------
     rewrite_prompt = (
         "Based on the following reasoning:\n\n"
         f"{reasoning_text}\n\n"
@@ -142,9 +127,8 @@ def refine_query(original_query, model="llama3.2"):
     final_refined = rewrite_response["message"]["content"].strip()
     return final_refined
 
-
 # ---------------------------------------------------------------------
-# 6) FINAL LLM RESPONSE (RAG ANSWER)
+# 6) GENERATE FINAL LLM RESPONSE
 # ---------------------------------------------------------------------
 def answer_with_llama(user_query, context, model="llama3.2"):
     rag_prompt = (
@@ -161,14 +145,14 @@ def answer_with_llama(user_query, context, model="llama3.2"):
     return response['message']['content']
 
 # ---------------------------------------------------------------------
-# 7) MAIN EXECUTION
+# 7) MAIN EXECUTION: RUN SYSTEM
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
     excel_path       = "dbo_Prj_Detail_Charges.xlsx"
     vector_db_folder = "./vector_db"
     collection_name  = "TimesheetData"
 
-    # Generate or update the database
+    # Generate or update the database (only if needed)
     generateDB(excel_path, vector_db_folder, collection_name)
 
     # 1) Take the raw user query
