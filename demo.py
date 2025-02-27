@@ -13,35 +13,46 @@ CHROMADB_PATH = os.getenv("VECTOR_DATABASE_PATH")      # e.g. "timesheet-chroma"
 COLLECTION_NAME = "Timesheet-Comments"
 
 def generate_timesheet_db(df, collection):
-    """
-    For each row in 'df', embed the timesheet comment,
-    then store the embedding + metadata in the ChromaDB collection.
-    """
+    # 1) Fetch all existing IDs in the collection
+    existing_docs = collection.get()  # or collection.get(where={}) 
+    existing_ids = []
+    for sublist in existing_docs["ids"]:
+        existing_ids.extend(sublist)
+    existing_ids_set = set(existing_ids)
+
+    # 2) Loop through each row in the DataFrame
     for i, row in df.iterrows():
+        doc_id = f"row-{i}"
+
+        # 3) If this doc_id is already present, skip re-embedding
+        if doc_id in existing_ids_set:
+            print(f"Skipping existing embedding ID: {doc_id}")
+            continue
+
+        # Otherwise embed and add
         comment = str(row.get("trn_desc", ""))
         prj_code = str(row.get("prj_code", ""))
         prj_name = str(row.get("prj_name", ""))
 
-        # 1) Embed the timesheet comment
         embed_response = ollama.embeddings(model="mxbai-embed-large", prompt=comment)
         embedding = embed_response["embedding"]
 
-        # 2) Construct a "document" and some metadata
         doc_text = f"Timesheet Comment: {comment}"
         metadata = {
             "prj_code": prj_code,
-            "prj_name": prj_name
+            "prj_name": prj_name,
         }
 
-        # 3) Add to the collection
         collection.add(
-            ids=[f"row-{i}"],
+            ids=[doc_id],
             embeddings=[embedding],
             documents=[doc_text],
             metadatas=[metadata]
         )
+        print(f"Inserted new embedding ID: {doc_id}")
 
-    print("Timesheet database has been generated (vectorized + stored).")
+    print("Timesheet database has been updated (only new rows were added).")
+
 
 def query_timesheet_db(query, collection, top_n=10):
     """
