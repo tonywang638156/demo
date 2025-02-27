@@ -22,45 +22,40 @@ def get_chroma_collection(db_path, collection_name):
 
 # ---------------------------------------------------------------------
 # 3) GENERATE DB: EMBED TIMESHEET ROWS AND STORE IN CHROMADB IF NEEDED
-# ---------------------------------------------------------------------
 def generateDB(filepath, db_path, collection_name):
     timesheet_comments, project_codes, project_names = load_timesheet_data(filepath)
     collection = get_chroma_collection(db_path, collection_name)
 
-    # Check if database is already populated
-    existing_ids = collection.get()["ids"]
-    if existing_ids:
-        print("✅ Embeddings already exist in ChromaDB. Skipping embedding process.")
-        return  # Skip processing if data is already stored
+    print("🛠 Checking existing embeddings in ChromaDB...")
 
-    print("🛠 Generating embeddings and storing them in ChromaDB...")
-    
     for i, comment in enumerate(timesheet_comments):
-        doc_id = f"row_{i}"
-        doc_text = (
-            f"Timesheet Comment: {comment}\n"
-            f"Project Code: {project_codes[i]}\n"
-            f"Project Name: {project_names[i]}"
-        )
+        doc_id = f"row_{i}"  # Unique ID for each document
 
-        # Generate embedding
+        # Check if this specific document ID already exists in ChromaDB
+        existing_ids = collection.get(ids=[doc_id])["ids"]
+        if existing_ids:
+            print(f"✅ Skipping already stored embedding: {doc_id}")
+            continue  # Skip embedding if it already exists
+
+        # Generate embedding only if it's a new entry
         embedding_response = ollama.embeddings(model="mxbai-embed-large", prompt=comment)
         embedding_vector = embedding_response["embedding"]
 
-        # Store in Chroma
+        # Store in ChromaDB
         collection.add(
             ids=[doc_id],
             embeddings=[embedding_vector],
-            documents=[doc_text],
+            documents=[comment],
             metadatas=[{
                 "comment": comment,
                 "prj_code": project_codes[i],
                 "prj_name": project_names[i]
             }]
         )
-        print(f"📌 Inserted embedding ID: {doc_id}")
+        print(f"📌 Inserted new embedding ID: {doc_id}")
 
-    print("✅ Database has been updated with new embeddings.")
+    print("✅ Database updated with only new embeddings.")
+
 
 # ---------------------------------------------------------------------
 # 4) QUERY FUNCTION: RETRIEVE EMBEDDINGS FROM CHROMA
