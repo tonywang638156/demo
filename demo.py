@@ -4,16 +4,8 @@ import pandas as pd
 import ollama
 import chromadb
 
-
-def load_timesheet_data(filepath):
-    df = pd.read_excel(filepath)
-    timesheet_comments = df["trn_desc"].tolist()
-    project_codes      = df["prj_code"].tolist()
-    project_names      = df["prj_name"].tolist()
-    return timesheet_comments, project_codes, project_names
-
 # ---------------------------------------------------------------------
-# 2) CREATE/OPEN CHROMA CLIENT AND COLLECTION
+# 1) CREATE/OPEN CHROMA CLIENT AND COLLECTION
 # ---------------------------------------------------------------------
 def get_chroma_collection(db_path, collection_name):
     client = chromadb.PersistentClient(path=db_path)
@@ -21,44 +13,61 @@ def get_chroma_collection(db_path, collection_name):
     return collection
 
 # ---------------------------------------------------------------------
-# 3) GENERATE DB: EMBED TIMESHEET ROWS AND STORE IN CHROMADB IF NEEDED
+# 2) GENERATE DB: EMBED TIMESHEET ROWS AND STORE IN CHROMADB IF NEEDED
+# ---------------------------------------------------------------------
 def generateDB(filepath, db_path, collection_name):
-    timesheet_comments, project_codes, project_names = load_timesheet_data(filepath)
-    collection = get_chroma_collection(db_path, collection_name)
+    # Inline reading of the Excel file (replaces load_timesheet_data)
+    df = pd.read_excel(filepath)
+    timesheet_comments = df["trn_desc"].tolist()
+    project_codes      = df["prj_code"].tolist()
+    project_names      = df["prj_name"].tolist()
 
-    print("🛠 Checking existing embeddings in ChromaDB...")
+    collection = get_chroma_collection(db_path, collection_name)
+    
+    # Get existing IDs (doc_ids) from the collection
+    existing_ids = set(collection.get()["ids"])
+    new_emb_count = 0
+
+    print("🛠 Checking each row to add missing embeddings...")
 
     for i, comment in enumerate(timesheet_comments):
-        doc_id = f"row_{i}"  # Unique ID for each document
+        doc_id = f"row_{i}"
 
-        # Check if this specific document ID already exists in ChromaDB
-        existing_ids = collection.get(ids=[doc_id])["ids"]
-        if existing_ids:
-            print(f"✅ Skipping already stored embedding: {doc_id}")
-            continue  # Skip embedding if it already exists
+        # If this doc_id is already in the database, skip
+        if doc_id in existing_ids:
+            continue
+        
+        doc_text = (
+            f"Timesheet Comment: {comment}\n"
+            f"Project Code: {project_codes[i]}\n"
+            f"Project Name: {project_names[i]}"
+        )
 
-        # Generate embedding only if it's a new entry
+        # Generate embedding
         embedding_response = ollama.embeddings(model="mxbai-embed-large", prompt=comment)
         embedding_vector = embedding_response["embedding"]
 
-        # Store in ChromaDB
+        # Store in Chroma
         collection.add(
             ids=[doc_id],
             embeddings=[embedding_vector],
-            documents=[comment],
+            documents=[doc_text],
             metadatas=[{
                 "comment": comment,
                 "prj_code": project_codes[i],
                 "prj_name": project_names[i]
             }]
         )
-        print(f"📌 Inserted new embedding ID: {doc_id}")
+        new_emb_count += 1
+        print(f"📌 Inserted embedding ID: {doc_id}")
 
-    print("✅ Database updated with only new embeddings.")
-
+    if new_emb_count == 0:
+        print("✅ All embeddings already exist in ChromaDB. Skipping embedding process.")
+    else:
+        print(f"✅ Database has been updated with {new_emb_count} new embeddings.")
 
 # ---------------------------------------------------------------------
-# 4) QUERY FUNCTION: RETRIEVE EMBEDDINGS FROM CHROMA
+# 3) QUERY FUNCTION: RETRIEVE EMBEDDINGS FROM CHROMA
 # ---------------------------------------------------------------------
 def get_embeddings(prompt, db_path, collection_name, top_n=5):
     collection = get_chroma_collection(db_path, collection_name)
@@ -89,7 +98,7 @@ def get_embeddings(prompt, db_path, collection_name, top_n=5):
     return matched_docs
 
 # ---------------------------------------------------------------------
-# 5) QUERY REFINEMENT: HANDLE SHORT OR VAGUE QUERIES
+# 4) QUERY REFINEMENT: HANDLE SHORT OR VAGUE QUERIES
 # ---------------------------------------------------------------------
 def refine_query(original_query, model="llama3.2"):
     """
@@ -123,7 +132,7 @@ def refine_query(original_query, model="llama3.2"):
     return final_refined
 
 # ---------------------------------------------------------------------
-# 6) GENERATE FINAL LLM RESPONSE
+# 5) GENERATE FINAL LLM RESPONSE
 # ---------------------------------------------------------------------
 def answer_with_llama(user_query, context, model="llama3.2"):
     rag_prompt = (
@@ -140,7 +149,7 @@ def answer_with_llama(user_query, context, model="llama3.2"):
     return response['message']['content']
 
 # ---------------------------------------------------------------------
-# 7) MAIN EXECUTION: RUN SYSTEM
+# 6) MAIN EXECUTION: RUN SYSTEM
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
     excel_path       = "dbo_Prj_Detail_Charges.xlsx"
