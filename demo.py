@@ -1,185 +1,102 @@
 import os
-import sys
 import pandas as pd
 import ollama
 import chromadb
+from chromadb.config import Settings
+from dotenv import load_dotenv
 
-# ---------------------------------------------------------------------
-# 1) CREATE/OPEN CHROMA CLIENT AND COLLECTION
-# ---------------------------------------------------------------------
-def get_chroma_collection(db_path, collection_name):
-    client = chromadb.PersistentClient(path=db_path)
-    collection = client.get_or_create_collection(name=collection_name)
-    return collection
+load_dotenv()
 
-# ---------------------------------------------------------------------
-# 2) GENERATE DB: EMBED TIMESHEET ROWS AND STORE IN CHROMADB IF NEEDED
-# ---------------------------------------------------------------------
-def generateDB(filepath, db_path, collection_name):
-    # Inline reading of the Excel file (replaces load_timesheet_data)
-    df = pd.read_excel(filepath)
-    timesheet_comments = df["trn_desc"].tolist()
-    project_codes      = df["prj_code"].tolist()
-    project_names      = df["prj_name"].tolist()
+# --- Configuration ---
+TIMESHEET_FILEPATH = os.getenv("TIMESHEET_FILEPATH")  # e.g. "clean.xlsx"
+CHROMADB_PATH = os.getenv("VECTOR_DATABASE_PATH")      # e.g. "timesheet-chroma"
+COLLECTION_NAME = "Timesheet-Comments"
 
-    collection = get_chroma_collection(db_path, collection_name)
-    
-    # Get existing IDs (doc_ids) from the collection
-    existing_ids = set(collection.get()["ids"])
-    new_emb_count = 0
+def generate_timesheet_db(df, collection):
+    """
+    For each row in 'df', embed the timesheet comment,
+    then store the embedding + metadata in the ChromaDB collection.
+    """
+    for i, row in df.iterrows():
+        comment = str(row.get("trn_desc", ""))
+        prj_code = str(row.get("prj_code", ""))
+        prj_name = str(row.get("prj_name", ""))
 
-    print("🛠 Checking each row to add missing embeddings...")
+        # 1) Embed the timesheet comment
+        embed_response = ollama.embeddings(model="mxbai-embed-large", prompt=comment)
+        embedding = embed_response["embedding"]
 
-    for i, comment in enumerate(timesheet_comments):
-        doc_id = f"row_{i}"
+        # 2) Construct a "document" and some metadata
+        doc_text = f"Timesheet Comment: {comment}"
+        metadata = {
+            "prj_code": prj_code,
+            "prj_name": prj_name
+        }
 
-        # If this doc_id is already in the database, skip
-        if doc_id in existing_ids:
-            continue
-        
-        doc_text = (
-            f"Timesheet Comment: {comment}\n"
-            f"Project Code: {project_codes[i]}\n"
-            f"Project Name: {project_names[i]}"
-        )
-
-        # Generate embedding
-        embedding_response = ollama.embeddings(model="mxbai-embed-large", prompt=comment)
-        embedding_vector = embedding_response["embedding"]
-
-        # Store in Chroma
+        # 3) Add to the collection
         collection.add(
-            ids=[doc_id],
-            embeddings=[embedding_vector],
+            ids=[f"row-{i}"],
+            embeddings=[embedding],
             documents=[doc_text],
-            metadatas=[{
-                "comment": comment,
-                "prj_code": project_codes[i],
-                "prj_name": project_names[i]
-            }]
+            metadatas=[metadata]
         )
-        new_emb_count += 1
-        print(f"📌 Inserted embedding ID: {doc_id}")
 
-    if new_emb_count == 0:
-        print("✅ All embeddings already exist in ChromaDB. Skipping embedding process.")
-    else:
-        print(f"✅ Database has been updated with {new_emb_count} new embeddings.")
+    print("Timesheet database has been generated (vectorized + stored).")
 
-# ---------------------------------------------------------------------
-# 3) QUERY FUNCTION: RETRIEVE EMBEDDINGS FROM CHROMA
-# ---------------------------------------------------------------------
-def get_embeddings(prompt, db_path, collection_name, top_n=5):
-    collection = get_chroma_collection(db_path, collection_name)
-    
-    # Generate embedding for user query
-    embed_response = ollama.embeddings(model="mxbai-embed-large", prompt=prompt)
-    query_vector = embed_response["embedding"]
+def query_timesheet_db(query, collection, top_n=10):
+    """
+    Given a text query, embed it and retrieve the top_n
+    matching documents from the DB. Then return a list
+    of (prj_code, prj_name, timesheet_comment).
+    """
+    # 1) Embed the query
+    query_embed = ollama.embeddings(model="mxbai-embed-large", prompt=query)
+    query_embedding = query_embed["embedding"]
 
-    # Query ChromaDB for relevant results
-    dbResponse = collection.query(
-        query_embeddings=[query_vector],
+    # 2) Query the ChromaDB collection
+    results = collection.query(
+        query_embeddings=[query_embedding],
         n_results=top_n
     )
 
-    matched_docs = []
-    for i in range(len(dbResponse["documents"][0])):
-        doc_text   = dbResponse["documents"][0][i]
-        doc_id     = dbResponse["ids"][0][i]
-        metadata   = dbResponse["metadatas"][0][i]
-        matched_docs.append({
-            "doc_id": doc_id,
-            "text": doc_text,
-            "comment": metadata["comment"],
-            "prj_code": metadata["prj_code"],
-            "prj_name": metadata["prj_name"]
-        })
+    # 'results' is a dict with keys: "ids", "embeddings", "metadatas", "documents"
+    # Each is a list of lists, e.g. results["metadatas"] -> [[{...}, {...}], [{...}, {...}]]
+    # We'll flatten them for convenience:
+    matched_projects = []
+    for meta_list, doc_list in zip(results["metadatas"], results["documents"]):
+        for meta, doc in zip(meta_list, doc_list):
+            matched_projects.append({
+                "prj_code": meta.get("prj_code"),
+                "prj_name": meta.get("prj_name"),
+                "comment": doc
+            })
+
+    return matched_projects
+
+def main():
+    # 1) Load the Timesheet data
+    df = pd.read_excel(TIMESHEET_FILEPATH)
+
+    # 2) Create/Get ChromaDB client + collection
+    client = chromadb.PersistentClient(path=CHROMADB_PATH)
+    collection = client.get_or_create_collection(name=COLLECTION_NAME)
+
+    # (Optional) If you want a fresh rebuild every run, you can do:
+    #   client.delete_collection(name=COLLECTION_NAME)
+    #   collection = client.create_collection(name=COLLECTION_NAME)
+
+    # 3) Generate (i.e. vectorize + store) the data
+    generate_timesheet_db(df, collection)
+
+    # 4) Test a query
+    test_query = "Steel design"  # or "interior design"
+    results = query_timesheet_db(test_query, collection, top_n=20)
     
-    return matched_docs
+    print(f"\nTop matches for query: '{test_query}'")
+    for item in results:
+        print(f"Project Code: {item['prj_code']}, Project Name: {item['prj_name']}")
+        # If desired, also show timesheet comment:
+        # print(f"  Comment: {item['comment']}\n")
 
-# ---------------------------------------------------------------------
-# 4) QUERY REFINEMENT: HANDLE SHORT OR VAGUE QUERIES
-# ---------------------------------------------------------------------
-def refine_query(original_query, model="llama3.2"):
-    """
-    Uses a multi-step reasoning-based approach to rewrite short or ambiguous queries.
-    """
-    reasoning_prompt = (
-        "We have a short or ambiguous user query:\n"
-        f"'{original_query}'\n\n"
-        "Step-by-step, consider potential expansions, synonyms, or clarifications.\n"
-    )
-
-    reasoning_response = ollama.chat(
-        model=model,
-        messages=[{"role": "user", "content": reasoning_prompt}],
-    )
-    reasoning_text = reasoning_response["message"]["content"]
-
-    rewrite_prompt = (
-        "Based on the following reasoning:\n\n"
-        f"{reasoning_text}\n\n"
-        "Now produce ONE refined query (a single line) that best captures the user's intent. "
-        "Do not add disclaimers, greetings, or extra text. Only provide the final refined query.\n"
-    )
-
-    rewrite_response = ollama.chat(
-        model=model,
-        messages=[{"role": "user", "content": rewrite_prompt}],
-    )
-
-    final_refined = rewrite_response["message"]["content"].strip()
-    return final_refined
-
-# ---------------------------------------------------------------------
-# 5) GENERATE FINAL LLM RESPONSE
-# ---------------------------------------------------------------------
-def answer_with_llama(user_query, context, model="llama3.2"):
-    rag_prompt = (
-        f"You are given the following retrieved context from a timesheet database:\n\n"
-        f"{context}\n\n"
-        f"User query: {user_query}\n\n"
-        f"Please provide a detailed yet concise answer based on the provided context."
-    )
-
-    response = ollama.chat(
-        model=model,
-        messages=[{'role': 'user', 'content': rag_prompt}]
-    )
-    return response['message']['content']
-
-# ---------------------------------------------------------------------
-# 6) MAIN EXECUTION: RUN SYSTEM
-# ---------------------------------------------------------------------
 if __name__ == "__main__":
-    excel_path       = "dbo_Prj_Detail_Charges.xlsx"
-    vector_db_folder = "./vector_db"
-    collection_name  = "TimesheetData"
-
-    # Generate or update the database (only if needed)
-    generateDB(excel_path, vector_db_folder, collection_name)
-
-    # 1) Take the raw user query
-    user_query = "bg"  # Example of a vague or shorthand query
-
-    # 2) Refine the query using LLM
-    refined = refine_query(user_query, model="llama3.2")
-    print(f"🔍 Original query: '{user_query}'")
-    print(f"✅ Refined query : '{refined}'")
-
-    # 3) Use refined query for embedding-based search
-    results = get_embeddings(refined, vector_db_folder, collection_name, top_n=3)
-
-    print(f"\n🔎 Top matches for refined query: '{refined}'\n")
-    for r in results:
-        print("----")
-        print(f"📌 Doc ID: {r['doc_id']}")
-        print(f"📝 Timesheet Comment: {r['comment']}")
-        print(f"📁 Project Code: {r['prj_code']}")
-        print(f"📌 Project Name: {r['prj_name']}")
-        print()
-
-    # 4) Generate final LLM response
-    combined_context = "\n".join([f"- {d['text']}" for d in results])
-    final_answer = answer_with_llama(refined, combined_context, model="llama3.2")
-    print("💡 LLM Answer:\n", final_answer)
+    main()
