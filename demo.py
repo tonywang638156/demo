@@ -12,6 +12,20 @@ TIMESHEET_FILEPATH = os.getenv("TIMESHEET_FILEPATH")  # e.g. "clean.xlsx"
 CHROMADB_PATH = os.getenv("VECTOR_DATABASE_PATH")      # e.g. "timesheet-chroma"
 COLLECTION_NAME = "Timesheet-Comments"
 
+
+def expand_comment_with_llm(comment):
+    """
+    Uses an LLM to generate a more detailed description of the short timesheet comment.
+    """
+    prompt = f"""
+    The following is a short and vague timesheet comment: "{comment}".
+    Expand it into a detailed description explaining what this work might involve.
+    Be professional and clear.
+    """
+    
+    response = ollama.generate(model="mistral", prompt=prompt)  # Change model if needed
+    return response["response"]  # Extract LLM-generated text
+
 def generate_timesheet_db(df, collection):
     # 1) Fetch all existing IDs in the collection
     existing_docs = collection.get()  # or collection.get(where={}) 
