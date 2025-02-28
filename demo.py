@@ -1,71 +1,104 @@
 import os
+import json
 import pandas as pd
 import ollama
 import chromadb
-from chromadb.config import Settings
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # --- Configuration ---
-TIMESHEET_FILEPATH = os.getenv("TIMESHEET_FILEPATH")  # e.g. "clean.xlsx"
-CHROMADB_PATH = os.getenv("VECTOR_DATABASE_PATH")      # e.g. "timesheet-chroma"
+TIMESHEET_FILEPATH = os.getenv("TIMESHEET_FILEPATH")  
+CHROMADB_PATH = os.getenv("VECTOR_DATABASE_PATH")     
 COLLECTION_NAME = "Timesheet-Comments"
+CACHE_FILE = "expanded_cache.json"  # JSON file to store LLM-generated expansions
 
 
-def expand_comment_with_llm(comment):
+def load_cache():
+    """Load cached expanded comments from a JSON file to avoid redundant LLM calls."""
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, "r") as file:
+            return json.load(file)
+    return {}  # Return an empty dictionary if cache file doesn't exist
+
+
+def save_cache(cache):
+    """Save updated cache to the JSON file."""
+    with open(CACHE_FILE, "w") as file:
+        json.dump(cache, file, indent=4)
+
+
+def expand_comment_with_llm(comment, cache):
     """
-    Uses an LLM to generate a more detailed description of the short timesheet comment.
+    Expands the short timesheet comment using an LLM.
+    Uses caching to avoid redundant LLM calls.
     """
+    if comment in cache:
+        return cache[comment]  # Reuse cached response
+
     prompt = f"""
     The following is a short and vague timesheet comment: "{comment}".
     Expand it into a detailed description explaining what this work might involve.
     Be professional and clear.
     """
     
-    response = ollama.generate(model="mistral", prompt=prompt)  # Change model if needed
-    return response["response"]  # Extract LLM-generated text
+    response = ollama.generate(model="mistral", prompt=prompt)  
+    expanded_comment = response["response"]
+    
+    # Cache the result
+    cache[comment] = expanded_comment
+    save_cache(cache)
+
+    return expanded_comment
+
 
 def generate_timesheet_db(df, collection):
-    # 1) Fetch all existing IDs in the collection
-    existing_docs = collection.get()  # or collection.get(where={}) 
+    """
+    Enhances timesheet comments using LLM, embeds them, and stores them in ChromaDB.
+    Uses a cache to speed up processing.
+    """
+
+    # Load cache
+    expanded_cache = load_cache()
+
+    # Fetch all existing IDs in ChromaDB
+    existing_docs = collection.get(limit=None)
     existing_ids = []
     for sublist in existing_docs["ids"]:
-        existing_ids.extend(sublist)
+        existing_ids.append(sublist)
+
     existing_ids_set = set(existing_ids)
 
-    # 2) Loop through each row in the DataFrame
+    # Process each row
     for i, row in df.iterrows():
         doc_id = f"row-{i}"
 
-        # 3) If this doc_id is already present, skip re-embedding
         if doc_id in existing_ids_set:
             print(f"Skipping existing embedding ID: {doc_id}")
             continue
 
-        # Otherwise embed and add
-        comment = str(row.get("trn_desc", ""))
-        prj_code = str(row.get("prj_code", ""))
-        prj_name = str(row.get("prj_name", ""))
+        # Get original comment and expand using cache or LLM
+        short_comment = str(row.get("trn_desc", "")).strip()
+        expanded_comment = expand_comment_with_llm(short_comment, expanded_cache)
 
-        embed_response = ollama.embeddings(model="mxbai-embed-large", prompt=comment)
+        print(f"Expanded Comment for {doc_id}: {expanded_comment}")  
+
+        # Embed the expanded comment
+        embed_response = ollama.embeddings(model="mxbai-embed-large", prompt=expanded_comment)
         embedding = embed_response["embedding"]
 
-        doc_text = f"Timesheet Comment: {comment}"
-        metadata = {
-            "prj_code": prj_code,
-            "prj_name": prj_name,
-        }
-
+        # Store in ChromaDB
         collection.add(
             ids=[doc_id],
             embeddings=[embedding],
-            documents=[doc_text],
-            metadatas=[metadata]
+            documents=[expanded_comment],
+            metadatas=[{"prj_name": str(row.get("prj_name", ""))}]
         )
+
         print(f"Inserted new embedding ID: {doc_id}")
 
-    print("Timesheet database has been updated (only new rows were added).")
+    print("Timesheet database has been updated with cached LLM-enhanced descriptions.")
+
 
 
 def query_timesheet_db(query, collection, top_n=10):
