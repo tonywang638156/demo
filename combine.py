@@ -8,7 +8,7 @@ import chromadb
 # --- Configuration ---
 load_dotenv()
 TIMESHEET_FILEPATH = os.getenv("TIMESHEET_FILEPATH", "./clean.xlsx")
-CHROMADB_PATH = os.getenv("VECTOR_DATABASE_PATH", "./ts-cm-db3")
+CHROMADB_PATH = os.getenv("VECTOR_DATABASE_PATH", "./ts-cm-db6")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "TimesheetData")
 CACHE_FILE = "expanded_cache.json"  # JSON file to store LLM-generated expansions
 
@@ -40,15 +40,15 @@ def expand_comment_with_llm(comment, cache):
     
     # prompt = (
     #     f'The following is a short and vague timesheet comment: "{comment}".\n'
-    #     "Expand it into a detailed description (within 50 characters) explaining what this work might involve.\n"
-    #     "Be professional and clear."
+    #     "Expand it into a detailed description (within 100 characters) explaining what this work might involve.\n"
+    #     "Be professional and clear. Provide the response in one paragraph, no lines in between"
     # )
     prompt = (
     f'The following is a short timesheet comment: "{comment}".\n'
     "Expand it into a detailed description (within 50 characters) explaining what this work might involve.\n"
     "Be professional, clear, and do not include any extra text.\n"
-    "Only output the final expanded comment itself, nothing else.")
-
+    "Only output the final expanded comment itself, nothing else."
+    )
     
     response = ollama.generate(model="llama3.2", prompt=prompt)
     expanded_comment = response["response"]
@@ -111,7 +111,12 @@ def generate_timesheet_db(df, collection):
             ids=[doc_id],
             embeddings=[embedding],
             documents=[short_comment],
-            metadatas=[{"prj_name": str(row.get("prj_name", ""))}]
+            metadatas=[{
+                "comment": short_comment,
+                "enriched_comment": expanded_comment,
+                "prj_code": str(row.get("prj_code", "")),
+                "prj_name": str(row.get("prj_name", ""))
+            }]
         )
 
         print(f"Inserted new embedding ID: {doc_id}")
