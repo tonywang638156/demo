@@ -38,11 +38,17 @@ def expand_comment_with_llm(comment, cache):
     if comment in cache:
         return cache[comment]
     
+    # prompt = (
+    #     f'The following is a short and vague timesheet comment: "{comment}".\n'
+    #     "Expand it into a detailed description (within 50 characters) explaining what this work might involve.\n"
+    #     "Be professional and clear."
+    # )
     prompt = (
-        f'The following is a short and vague timesheet comment: "{comment}".\n'
-        "Expand it into a detailed description (within 50 characters) explaining what this work might involve.\n"
-        "Be professional and clear."
-    )
+    f'The following is a short timesheet comment: "{comment}".\n'
+    "Expand it into a detailed description (within 50 characters) explaining what this work might involve.\n"
+    "Be professional, clear, and do not include any extra text.\n"
+    "Only output the final expanded comment itself, nothing else.")
+
     
     response = ollama.generate(model="llama3.2", prompt=prompt)
     expanded_comment = response["response"]
