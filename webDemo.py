@@ -104,13 +104,14 @@ def generate_timesheet_db(df, collection):
 # ----------------------------
 def refine_query(original_query, model="llama3.2"):
     reasoning_prompt = (
-        "We have a short or ambiguous user query:\n"
+        "We have a user query:\n"
         f"'{original_query}'\n\n"
-        "Step-by-step, consider potential expansions, synonyms, or clarifications.\n"
-        "For example, if the query is 'info', possible expansions could be 'information', 'additional info', etc.\n"
-        "If the query is 'fin', expansions might be 'finance', 'financial data', etc.\n\n"
-        "List these possibilities or your chain-of-thought reasoning, and end with a short summary.\n"
+        "Step-by-step, list possible clarifications or synonyms for key terms in the query.\n"
+        "Then, produce ONE refined query (a single line) that makes the query clearer while preserving its original intent.\n"
+        "Do not add extra context, greetings, or unrelated details—only output the refined query.\n"
     )
+Do not add extra context, greetings, or unrelated details—only output the refined query.
+
     reasoning_response = ollama.chat(
         model=model,
         messages=[{"role": "user", "content": reasoning_prompt}],
