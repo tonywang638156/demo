@@ -7,10 +7,10 @@ import ollama
 import chromadb
 
 # ----------------------------
-# Configuration & Environment
+# 1111111111111111111
 # ----------------------------
 load_dotenv()
-DEFAULT_TIMESHEET_FILEPATH = os.getenv("TIMESHEET_FILEPATH", "./clean.xlsx")
+TIMESHEET_FILEPATH = os.getenv("TIMESHEET_FILEPATH", "./clean.xlsx")
 CHROMADB_PATH = os.getenv("VECTOR_DATABASE_PATH", "./ts-cm-db6")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "TimesheetData")
 CACHE_FILE = "expanded_cache.json"  # Cache file for LLM expansions
@@ -62,28 +62,42 @@ def get_chroma_collection(db_path, collection_name):
 # Database generation: Enrich, embed, and store
 # ----------------------------
 def generate_timesheet_db(df, collection):
+    """
+    Enhances timesheet comments using LLM, embeds them, and stores them in ChromaDB.
+    Uses a cache to speed up processing.
+    """
+
+    # Load cache
     expanded_cache = load_cache()
 
-    # Fetch existing IDs from ChromaDB
+    # Fetch all existing IDs in ChromaDB
     existing_docs = collection.get(limit=None)
-    existing_ids = set()
+    existing_ids = []
     for sublist in existing_docs["ids"]:
-        existing_ids.update(sublist)
+        existing_ids.append(sublist)
 
+    existing_ids_set = set(existing_ids)
+
+    # Process each row
     for i, row in df.iterrows():
         doc_id = f"row-{i}"
-        if doc_id in existing_ids:
+
+        if doc_id in existing_ids_set:
+            #print(f"Skipping existing embedding ID: {doc_id}")
             continue
 
+        # Get original comment and expand using cache or LLM
         short_comment = str(row.get("trn_desc", "")).strip()
         expanded_comment = expand_comment_with_llm(short_comment, expanded_cache)
-        st.write(f"Processing {doc_id}:")
-        st.write(f"> Original: {short_comment}")
-        st.write(f"> Expanded: {expanded_comment}")
+        print(("-----------------------------------------------------------------------"))
+        print(f"orginal Comment for {doc_id}: {short_comment}")
+        print(f"Expanded Comment for {doc_id}: {expanded_comment}")
 
+        # Embed the expanded comment
         embed_response = ollama.embeddings(model="mxbai-embed-large", prompt=expanded_comment)
         embedding = embed_response["embedding"]
 
+        # Store in ChromaDB
         collection.add(
             ids=[doc_id],
             embeddings=[embedding],
@@ -95,8 +109,10 @@ def generate_timesheet_db(df, collection):
                 "prj_name": str(row.get("prj_name", ""))
             }]
         )
-        st.write(f"Inserted new embedding ID: {doc_id}")
 
+        print(f"Inserted new embedding ID: {doc_id}")
+        st.write(f"Inserted new embedding ID: {doc_id}")
+    print("Timesheet database updated.")
     st.success("Timesheet database updated.")
 
 # ----------------------------
@@ -110,8 +126,6 @@ def refine_query(original_query, model="llama3.2"):
         "Then, produce ONE refined query (a single line) that makes the query clearer while preserving its original intent.\n"
         "Do not add extra context, greetings, or unrelated details—only output the refined query.\n"
     )
-Do not add extra context, greetings, or unrelated details—only output the refined query.
-
     reasoning_response = ollama.chat(
         model=model,
         messages=[{"role": "user", "content": reasoning_prompt}],
@@ -174,41 +188,24 @@ def answer_with_llama(user_query, context, model="llama3.2"):
 def main():
     st.title("Timesheet LLM & ChromaDB Demo")
 
-    st.markdown("""
-    This demo demonstrates a system that enriches timesheet comments with an LLM, embeds them, 
-    stores them in a vector database (ChromaDB), and allows querying through refined queries.
-    """)
+    # Section to update/build the timesheet DB
+    if st.button("Update Timesheet Database"):
+        try:
+            df = pd.read_excel(TIMESHEET_FILEPATH)
+        except Exception as e:
+            st.error(f"Error loading Excel file: {e}")
+            return
 
-    # Section for updating the Excel file
-    st.header("Update Timesheet Data")
-    st.markdown("Upload a new Excel file to update the timesheet data. This file will replace the default file used by the system.")
-    uploaded_file = st.file_uploader("Choose an Excel file", type=["xlsx"])
-    user_email = st.text_input("Enter your email address", help="Your email address is used to track who is updating the data. In a production system, this might be used for authentication or notifications.")
-
-    if st.button("Update Database with Uploaded File"):
-        if not uploaded_file:
-            st.error("Please upload an Excel file first.")
-        elif not user_email:
-            st.error("Please enter your email address to proceed.")
-        else:
-            try:
-                df = pd.read_excel(uploaded_file)
-                # Optionally, you could save this file locally if needed:
-                df.to_excel(DEFAULT_TIMESHEET_FILEPATH, index=False)
-            except Exception as e:
-                st.error(f"Error processing the Excel file: {e}")
-                return
-
-            collection = get_chroma_collection(CHROMADB_PATH, COLLECTION_NAME)
-            with st.spinner("Processing timesheet data..."):
-                generate_timesheet_db(df, collection)
-            st.success("Database updated successfully with your uploaded file!")
+        collection = get_chroma_collection(CHROMADB_PATH, COLLECTION_NAME)
+        with st.spinner("Processing timesheet data..."):
+            generate_timesheet_db(df, collection)
+        st.success("Database updated successfully!")
 
     st.markdown("---")
 
     # Section for query processing
     st.header("Query the Timesheet Database")
-    original_query = st.text_input("Enter your query (e.g., a vague term or code):", value="bacgoun")
+    original_query = st.text_input("Enter your query", value="")
 
     if st.button("Search") and original_query.strip() != "":
         collection = get_chroma_collection(CHROMADB_PATH, COLLECTION_NAME)
