@@ -10,7 +10,7 @@ import chromadb
 # Configuration & Environment
 # ----------------------------
 load_dotenv()
-TIMESHEET_FILEPATH = os.getenv("TIMESHEET_FILEPATH", "./clean.xlsx")
+DEFAULT_TIMESHEET_FILEPATH = os.getenv("TIMESHEET_FILEPATH", "./clean.xlsx")
 CHROMADB_PATH = os.getenv("VECTOR_DATABASE_PATH", "./ts-cm-db6")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "TimesheetData")
 CACHE_FILE = "expanded_cache.json"  # Cache file for LLM expansions
@@ -172,24 +172,36 @@ def answer_with_llama(user_query, context, model="llama3.2"):
 # ----------------------------
 def main():
     st.title("Timesheet LLM & ChromaDB Demo")
-    
+
     st.markdown("""
     This demo demonstrates a system that enriches timesheet comments with an LLM, embeds them, 
     stores them in a vector database (ChromaDB), and allows querying through refined queries.
     """)
 
-    # Section to update/build the timesheet DB
-    if st.button("Update Timesheet Database"):
-        try:
-            df = pd.read_excel(TIMESHEET_FILEPATH)
-        except Exception as e:
-            st.error(f"Error loading Excel file: {e}")
-            return
+    # Section for updating the Excel file
+    st.header("Update Timesheet Data")
+    st.markdown("Upload a new Excel file to update the timesheet data. This file will replace the default file used by the system.")
+    uploaded_file = st.file_uploader("Choose an Excel file", type=["xlsx"])
+    user_email = st.text_input("Enter your email address", help="Your email address is used to track who is updating the data. In a production system, this might be used for authentication or notifications.")
 
-        collection = get_chroma_collection(CHROMADB_PATH, COLLECTION_NAME)
-        with st.spinner("Processing timesheet data..."):
-            generate_timesheet_db(df, collection)
-        st.success("Database updated successfully!")
+    if st.button("Update Database with Uploaded File"):
+        if not uploaded_file:
+            st.error("Please upload an Excel file first.")
+        elif not user_email:
+            st.error("Please enter your email address to proceed.")
+        else:
+            try:
+                df = pd.read_excel(uploaded_file)
+                # Optionally, you could save this file locally if needed:
+                df.to_excel(DEFAULT_TIMESHEET_FILEPATH, index=False)
+            except Exception as e:
+                st.error(f"Error processing the Excel file: {e}")
+                return
+
+            collection = get_chroma_collection(CHROMADB_PATH, COLLECTION_NAME)
+            with st.spinner("Processing timesheet data..."):
+                generate_timesheet_db(df, collection)
+            st.success("Database updated successfully with your uploaded file!")
 
     st.markdown("---")
 
