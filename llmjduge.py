@@ -183,16 +183,21 @@ import json
 
 def parse_json_from_response(llm_output: str) -> dict:
     """
-    Attempts to extract a JSON object from a string using regex.
-    Returns a dictionary if successful, or raises an error.
+    Finds all '{...}' blocks in llm_output and attempts to parse the largest one.
+    Returns a dict if successful, otherwise returns an error.
     """
-    # This pattern finds the first '{...}' block in the text.
-    match = re.search(r'\{(?:[^{}]|(?R))*\}', llm_output, re.DOTALL)
-    if match:
-        json_str = match.group(0)
-        return json.loads(json_str)
-    else:
-        raise ValueError(f"No JSON object found in LLM output: {llm_output}")
+    # Find all possible JSON blocks
+    matches = re.findall(r'\{(?:[^{}]|(?R))*\}', llm_output, re.DOTALL)
+    if not matches:
+        return {"error": f"No JSON object found in LLM output: {llm_output}"}
+
+    # Pick the largest match in case there are nested or partial braces
+    largest_match = max(matches, key=len)
+    try:
+        return json.loads(largest_match)
+    except json.JSONDecodeError:
+        return {"error": f"Could not parse the JSON object from: {llm_output}"}
+
 
 def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, final_answer):
     formatted_docs = "\n".join([f"- {doc}" for doc in retrieved_docs])
@@ -221,16 +226,14 @@ def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, 
     )
     
     response = ollama.chat(
-        model="deepseek-r1-7b",  # or your actual model name
+        model="deepseek-r1:7b",
         messages=[{"role": "user", "content": evaluation_prompt}],
     )
 
     llm_output = response["message"]["content"]
-    try:
-        evaluation = parse_json_from_response(llm_output)
-    except Exception as e:
-        evaluation = {"error": f"Could not parse LLM response: {llm_output}"}
+    evaluation = parse_json_from_response(llm_output)
     return evaluation
+
 
 
 # ----------------------------
