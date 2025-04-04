@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import streamlit as st
 import pandas as pd
 from dotenv import load_dotenv
@@ -178,27 +179,45 @@ def answer_with_llama(user_query, context, model="llama3.2"):
     )
     return response['message']['content']
 
-import re
-import json
+# ----------------------------
+# Bracket-matching JSON extraction
+# ----------------------------
+def extract_first_json_block(text: str) -> str:
+    """
+    Finds the first '{...}' block in 'text' by counting braces.
+    Returns the substring including nested braces if they match.
+    Raises ValueError if no valid block is found.
+    """
+    start_idx = text.find('{')
+    if start_idx == -1:
+        raise ValueError("No opening brace '{' found in the text.")
+    
+    brace_count = 0
+    for i in range(start_idx, len(text)):
+        if text[i] == '{':
+            brace_count += 1
+        elif text[i] == '}':
+            brace_count -= 1
+        
+        if brace_count == 0 and i > start_idx:
+            return text[start_idx:i+1]
+    
+    raise ValueError("No matching closing brace '}' found for the first '{'.")
 
 def parse_json_from_response(llm_output: str) -> dict:
     """
-    Finds all '{...}' blocks in llm_output and attempts to parse the largest one.
-    Returns a dict if successful, otherwise returns an error.
+    Uses bracket-matching to extract the first JSON block in 'llm_output'
+    and then parses it.
     """
-    # Find all possible JSON blocks
-    matches = re.findall(r'\{(?:[^{}]|(?R))*\}', llm_output, re.DOTALL)
-    if not matches:
-        return {"error": f"No JSON object found in LLM output: {llm_output}"}
-
-    # Pick the largest match in case there are nested or partial braces
-    largest_match = max(matches, key=len)
     try:
-        return json.loads(largest_match)
-    except json.JSONDecodeError:
-        return {"error": f"Could not parse the JSON object from: {llm_output}"}
+        json_block = extract_first_json_block(llm_output)
+        return json.loads(json_block)
+    except Exception as e:
+        raise ValueError(f"Could not parse JSON from LLM output: {e}\n\nFull output:\n{llm_output}")
 
-
+# ----------------------------
+# LLM-as-Judge: Evaluation function using deepseek model
+# ----------------------------
 def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, final_answer):
     formatted_docs = "\n".join([f"- {doc}" for doc in retrieved_docs])
     
@@ -211,7 +230,7 @@ def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, 
         f"**Final Answer:** {final_answer}\n\n"
         "Please evaluate the performance of the RAG system based on the following criteria:\n"
         "1. Accuracy\n2. Relevance\n3. Clarity\n4. Overall Performance\n\n"
-        "Return your response as valid JSON. Use this structure:\n\n"
+        "Return your response as valid JSON only. Use this structure:\n\n"
         "{\n"
         '  "accuracy_score": <score>,\n'
         '  "accuracy_comments": "Your comments here",\n'
@@ -226,21 +245,20 @@ def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, 
     )
     
     response = ollama.chat(
-        model="deepseek-r1:7b",
+        model="deepseek-r1-7b",  # Ensure this matches your pulled model name.
         messages=[{"role": "user", "content": evaluation_prompt}],
     )
 
     llm_output = response["message"]["content"]
-    evaluation = parse_json_from_response(llm_output)
+    try:
+        evaluation = parse_json_from_response(llm_output)
+    except Exception as e:
+        evaluation = {"error": str(e)}
     return evaluation
-
-
 
 # ----------------------------
 # Streamlit App Interface
 # ----------------------------
-
-# Initialize session state for storing query data and evaluation
 if "original_query" not in st.session_state:
     st.session_state.original_query = ""
 if "refined_query" not in st.session_state:
@@ -255,7 +273,7 @@ if "evaluation" not in st.session_state:
 def main():
     st.title("Timesheet LLM & ChromaDB Demo with RAG Evaluation (deepseek)")
 
-    # Section to update/build the timesheet DB
+    # Section: Update Timesheet DB
     if st.button("Update Timesheet Database"):
         try:
             df = pd.read_excel(TIMESHEET_FILEPATH)
@@ -270,7 +288,7 @@ def main():
 
     st.markdown("---")
 
-    # Section for query processing
+    # Section: Query the Timesheet Database
     st.header("Query the Timesheet Database")
     st.session_state.original_query = st.text_input("Enter your query", value=st.session_state.original_query)
 
@@ -280,7 +298,6 @@ def main():
         # Refine query
         with st.spinner("Refining query..."):
             st.session_state.refined_query = refine_query(st.session_state.original_query)
-
         st.write(f"**Refined Query:** {st.session_state.refined_query}")
 
         # Retrieve matching documents
@@ -304,11 +321,10 @@ def main():
         combined_context = "\n".join([f"- {d['text']}" for d in st.session_state.results])
         with st.spinner("Generating answer..."):
             st.session_state.final_answer = answer_with_llama(st.session_state.refined_query, combined_context)
-
         st.subheader("LLM Answer")
         st.write(st.session_state.final_answer)
 
-    # If there's already a final answer and results in session state, re-display them
+    # Re-display previously retrieved data if available
     if st.session_state.refined_query and st.session_state.final_answer:
         st.subheader("Previously Retrieved Documents and Answer")
         for r in st.session_state.results:
@@ -325,7 +341,6 @@ def main():
     st.header("Evaluate RAG System with deepseek")
 
     if st.button("Evaluate RAG System with deepseek"):
-        # Ensure we have a refined query, final answer, and results
         if not st.session_state.refined_query or not st.session_state.final_answer or not st.session_state.results:
             st.warning("Please perform a search first to generate the necessary data for evaluation.")
         else:
@@ -338,7 +353,6 @@ def main():
                     st.session_state.final_answer
                 )
 
-    # Display evaluation results if they exist in session state
     if st.session_state.evaluation:
         st.subheader("Evaluation Results")
         evaluation = st.session_state.evaluation
