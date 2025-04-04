@@ -231,7 +231,15 @@ def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, 
 # Streamlit App Interface
 # ----------------------------
 
-# Initialize session state for evaluation results if not already set.
+# Initialize session state for storing query data and evaluation
+if "original_query" not in st.session_state:
+    st.session_state.original_query = ""
+if "refined_query" not in st.session_state:
+    st.session_state.refined_query = ""
+if "final_answer" not in st.session_state:
+    st.session_state.final_answer = ""
+if "results" not in st.session_state:
+    st.session_state.results = []
 if "evaluation" not in st.session_state:
     st.session_state.evaluation = None
 
@@ -255,25 +263,25 @@ def main():
 
     # Section for query processing
     st.header("Query the Timesheet Database")
-    original_query = st.text_input("Enter your query", value="")
+    st.session_state.original_query = st.text_input("Enter your query", value=st.session_state.original_query)
 
-    # Define empty containers for refined query, final answer, and results.
-    refined_query = ""
-    final_answer = ""
-    results = []
-
-    if st.button("Search") and original_query.strip() != "":
+    if st.button("Search") and st.session_state.original_query.strip() != "":
         collection = get_chroma_collection(CHROMADB_PATH, COLLECTION_NAME)
-        with st.spinner("Refining query..."):
-            refined_query = refine_query(original_query)
-        st.write(f"**Refined Query:** {refined_query}")
-
-        with st.spinner("Retrieving matching documents..."):
-            results = get_embeddings(refined_query, collection, top_n=3)
         
-        if results:
+        # Refine query
+        with st.spinner("Refining query..."):
+            st.session_state.refined_query = refine_query(st.session_state.original_query)
+
+        st.write(f"**Refined Query:** {st.session_state.refined_query}")
+
+        # Retrieve matching documents
+        with st.spinner("Retrieving matching documents..."):
+            st.session_state.results = get_embeddings(st.session_state.refined_query, collection, top_n=3)
+
+        # Display retrieved documents
+        if st.session_state.results:
             st.subheader("Top Matching Documents")
-            for r in results:
+            for r in st.session_state.results:
                 st.markdown(f"**Doc ID:** {r['doc_id']}")
                 st.markdown(f"- **Timesheet Comment:** {r['comment']}")
                 st.markdown(f"- **Enriched Comment:** {r['enriched_comment']}")
@@ -283,26 +291,45 @@ def main():
         else:
             st.warning("No matching documents found.")
 
-        # Combine context and get LLM answer
-        combined_context = "\n".join([f"- {d['text']}" for d in results])
+        # Generate LLM answer
+        combined_context = "\n".join([f"- {d['text']}" for d in st.session_state.results])
         with st.spinner("Generating answer..."):
-            final_answer = answer_with_llama(refined_query, combined_context)
+            st.session_state.final_answer = answer_with_llama(st.session_state.refined_query, combined_context)
+
         st.subheader("LLM Answer")
-        st.write(final_answer)
+        st.write(st.session_state.final_answer)
+
+    # If there's already a final answer and results in session state, re-display them
+    if st.session_state.refined_query and st.session_state.final_answer:
+        st.subheader("Previously Retrieved Documents and Answer")
+        for r in st.session_state.results:
+            st.markdown(f"**Doc ID:** {r['doc_id']}")
+            st.markdown(f"- **Timesheet Comment:** {r['comment']}")
+            st.markdown(f"- **Enriched Comment:** {r['enriched_comment']}")
+            st.markdown(f"- **Project Code:** {r['prj_code']}")
+            st.markdown(f"- **Project Name:** {r['prj_name']}")
+            st.markdown("---")
+        st.subheader("LLM Answer")
+        st.write(st.session_state.final_answer)
 
     st.markdown("---")
     st.header("Evaluate RAG System with deepseek")
 
-    # Use a button to trigger evaluation and store the result in session state.
     if st.button("Evaluate RAG System with deepseek"):
-        if original_query.strip() == "" or refined_query == "" or final_answer == "":
+        # Ensure we have a refined query, final answer, and results
+        if not st.session_state.refined_query or not st.session_state.final_answer or not st.session_state.results:
             st.warning("Please perform a search first to generate the necessary data for evaluation.")
         else:
-            retrieved_texts = [d["text"] for d in results]
+            retrieved_texts = [d["text"] for d in st.session_state.results]
             with st.spinner("Evaluating RAG system with deepseek..."):
-                st.session_state.evaluation = evaluate_rag_system_deepseek(original_query, refined_query, retrieved_texts, final_answer)
+                st.session_state.evaluation = evaluate_rag_system_deepseek(
+                    st.session_state.original_query,
+                    st.session_state.refined_query,
+                    retrieved_texts,
+                    st.session_state.final_answer
+                )
 
-    # Display evaluation results if they exist in session state.
+    # Display evaluation results if they exist in session state
     if st.session_state.evaluation:
         st.subheader("Evaluation Results")
         evaluation = st.session_state.evaluation
