@@ -178,15 +178,7 @@ def answer_with_llama(user_query, context, model="llama3.2"):
     )
     return response['message']['content']
 
-# ----------------------------
-# LLM-as-Judge: Evaluation function using deepseek model
-# ----------------------------
 def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, final_answer):
-    """
-    Uses the deepseek model to evaluate the RAG system. The function formats the
-    inputs, sends an evaluation prompt to the deepseek model, and then returns the evaluation
-    as a parsed JSON object.
-    """
     formatted_docs = "\n".join([f"- {doc}" for doc in retrieved_docs])
     
     evaluation_prompt = (
@@ -201,8 +193,8 @@ def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, 
         "2. Relevance: How relevant are the retrieved documents to the query?\n"
         "3. Clarity: Is the refined query clear and does it capture the user’s intent?\n"
         "4. Overall Performance: What is the overall quality of the system?\n\n"
-        "For each category, provide detailed feedback and assign a score between 1 (poor) and 10 (excellent). "
-        "Return your response as a JSON object with the following structure:\n\n"
+        "Return your **entire response** as a **valid JSON object only**, with no extra text. "
+        "Use the exact field names and structure below:\n\n"
         "{\n"
         '  "accuracy_score": <score>,\n'
         '  "accuracy_comments": "Your comments here",\n'
@@ -212,11 +204,12 @@ def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, 
         '  "clarity_comments": "Your comments here",\n'
         '  "overall_score": <score>,\n'
         '  "overall_comments": "Your comments here"\n'
-        "}"
+        "}\n\n"
+        "No extra commentary, disclaimers, or markdown. **Only** output valid JSON."
     )
     
     response = ollama.chat(
-        model="deepseek",
+        model="deepseek-r1-7b",  # or whatever your installed model name is
         messages=[{"role": "user", "content": evaluation_prompt}],
     )
     
@@ -226,6 +219,7 @@ def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, 
     except Exception as e:
         evaluation = {"error": f"Could not parse LLM response: {result}"}
     return evaluation
+
 
 # ----------------------------
 # Streamlit App Interface
