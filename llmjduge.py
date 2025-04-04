@@ -266,4 +266,44 @@ def main():
             for r in results:
                 st.markdown(f"**Doc ID:** {r['doc_id']}")
                 st.markdown(f"- **Timesheet Comment:** {r['comment']}")
-                st.markdown(f"- **Enriched Comment:** {r['enriched_comment_
+                st.markdown(f"- **Enriched Comment:** {r['enriched_comment']}")
+                st.markdown(f"- **Project Code:** {r['prj_code']}")
+                st.markdown(f"- **Project Name:** {r['prj_name']}")
+                st.markdown("---")
+        else:
+            st.warning("No matching documents found.")
+
+        # Combine context and get LLM answer
+        combined_context = "\n".join([f"- {d['text']}" for d in results])
+        with st.spinner("Generating answer..."):
+            final_answer = answer_with_llama(refined_query, combined_context)
+        st.subheader("LLM Answer")
+        st.write(final_answer)
+
+        # ----------------------------
+        # Evaluation Section: Using deepseek as Judge
+        # ----------------------------
+        st.markdown("---")
+        st.header("Evaluate RAG System with deepseek")
+        if st.button("Evaluate RAG System with deepseek"):
+            retrieved_texts = [d["text"] for d in results]
+            with st.spinner("Evaluating RAG system with deepseek..."):
+                evaluation = evaluate_rag_system_deepseek(original_query, refined_query, retrieved_texts, final_answer)
+            
+            st.subheader("Evaluation Results")
+            if "error" in evaluation:
+                st.error(evaluation["error"])
+            else:
+                st.metric("Accuracy Score", evaluation.get("accuracy_score", "N/A"))
+                st.write("Accuracy Comments:", evaluation.get("accuracy_comments", "N/A"))
+                st.metric("Relevance Score", evaluation.get("relevance_score", "N/A"))
+                st.write("Relevance Comments:", evaluation.get("relevance_comments", "N/A"))
+                st.metric("Clarity Score", evaluation.get("clarity_score", "N/A"))
+                st.write("Clarity Comments:", evaluation.get("clarity_comments", "N/A"))
+                st.metric("Overall Score", evaluation.get("overall_score", "N/A"))
+                st.write("Overall Comments:", evaluation.get("overall_comments", "N/A"))
+                with st.expander("Show Raw Evaluation JSON"):
+                    st.json(evaluation)
+
+if __name__ == "__main__":
+    main()
