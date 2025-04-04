@@ -178,6 +178,22 @@ def answer_with_llama(user_query, context, model="llama3.2"):
     )
     return response['message']['content']
 
+import re
+import json
+
+def parse_json_from_response(llm_output: str) -> dict:
+    """
+    Attempts to extract a JSON object from a string using regex.
+    Returns a dictionary if successful, or raises an error.
+    """
+    # This pattern finds the first '{...}' block in the text.
+    match = re.search(r'\{(?:[^{}]|(?R))*\}', llm_output, re.DOTALL)
+    if match:
+        json_str = match.group(0)
+        return json.loads(json_str)
+    else:
+        raise ValueError(f"No JSON object found in LLM output: {llm_output}")
+
 def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, final_answer):
     formatted_docs = "\n".join([f"- {doc}" for doc in retrieved_docs])
     
@@ -189,12 +205,8 @@ def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, 
         f"**Retrieved Documents/Context:**\n{formatted_docs}\n\n"
         f"**Final Answer:** {final_answer}\n\n"
         "Please evaluate the performance of the RAG system based on the following criteria:\n"
-        "1. Accuracy: How accurately does the final answer address the original query?\n"
-        "2. Relevance: How relevant are the retrieved documents to the query?\n"
-        "3. Clarity: Is the refined query clear and does it capture the user’s intent?\n"
-        "4. Overall Performance: What is the overall quality of the system?\n\n"
-        "Return your **entire response** as a **valid JSON object only**, with no extra text. "
-        "Use the exact field names and structure below:\n\n"
+        "1. Accuracy\n2. Relevance\n3. Clarity\n4. Overall Performance\n\n"
+        "Return your response as valid JSON. Use this structure:\n\n"
         "{\n"
         '  "accuracy_score": <score>,\n'
         '  "accuracy_comments": "Your comments here",\n'
@@ -205,19 +217,19 @@ def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, 
         '  "overall_score": <score>,\n'
         '  "overall_comments": "Your comments here"\n'
         "}\n\n"
-        "No extra commentary, disclaimers, or markdown. **Only** output valid JSON."
+        "No additional text outside the JSON. No disclaimers or chain-of-thought."
     )
     
     response = ollama.chat(
-        model="deepseek-r1-7b",  # or whatever your installed model name is
+        model="deepseek-r1-7b",  # or your actual model name
         messages=[{"role": "user", "content": evaluation_prompt}],
     )
-    
-    result = response["message"]["content"]
+
+    llm_output = response["message"]["content"]
     try:
-        evaluation = json.loads(result)
+        evaluation = parse_json_from_response(llm_output)
     except Exception as e:
-        evaluation = {"error": f"Could not parse LLM response: {result}"}
+        evaluation = {"error": f"Could not parse LLM response: {llm_output}"}
     return evaluation
 
 
