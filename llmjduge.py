@@ -230,6 +230,11 @@ def evaluate_rag_system_deepseek(original_query, refined_query, retrieved_docs, 
 # ----------------------------
 # Streamlit App Interface
 # ----------------------------
+
+# Initialize session state for evaluation results if not already set.
+if "evaluation" not in st.session_state:
+    st.session_state.evaluation = None
+
 def main():
     st.title("Timesheet LLM & ChromaDB Demo with RAG Evaluation (deepseek)")
 
@@ -251,6 +256,11 @@ def main():
     # Section for query processing
     st.header("Query the Timesheet Database")
     original_query = st.text_input("Enter your query", value="")
+
+    # Define empty containers for refined query, final answer, and results.
+    refined_query = ""
+    final_answer = ""
+    results = []
 
     if st.button("Search") and original_query.strip() != "":
         collection = get_chroma_collection(CHROMADB_PATH, COLLECTION_NAME)
@@ -280,30 +290,35 @@ def main():
         st.subheader("LLM Answer")
         st.write(final_answer)
 
-        # ----------------------------
-        # Evaluation Section: Using deepseek as Judge
-        # ----------------------------
-        st.markdown("---")
-        st.header("Evaluate RAG System with deepseek")
-        if st.button("Evaluate RAG System with deepseek"):
+    st.markdown("---")
+    st.header("Evaluate RAG System with deepseek")
+
+    # Use a button to trigger evaluation and store the result in session state.
+    if st.button("Evaluate RAG System with deepseek"):
+        if original_query.strip() == "" or refined_query == "" or final_answer == "":
+            st.warning("Please perform a search first to generate the necessary data for evaluation.")
+        else:
             retrieved_texts = [d["text"] for d in results]
             with st.spinner("Evaluating RAG system with deepseek..."):
-                evaluation = evaluate_rag_system_deepseek(original_query, refined_query, retrieved_texts, final_answer)
-            
-            st.subheader("Evaluation Results")
-            if "error" in evaluation:
-                st.error(evaluation["error"])
-            else:
-                st.metric("Accuracy Score", evaluation.get("accuracy_score", "N/A"))
-                st.write("Accuracy Comments:", evaluation.get("accuracy_comments", "N/A"))
-                st.metric("Relevance Score", evaluation.get("relevance_score", "N/A"))
-                st.write("Relevance Comments:", evaluation.get("relevance_comments", "N/A"))
-                st.metric("Clarity Score", evaluation.get("clarity_score", "N/A"))
-                st.write("Clarity Comments:", evaluation.get("clarity_comments", "N/A"))
-                st.metric("Overall Score", evaluation.get("overall_score", "N/A"))
-                st.write("Overall Comments:", evaluation.get("overall_comments", "N/A"))
-                with st.expander("Show Raw Evaluation JSON"):
-                    st.json(evaluation)
+                st.session_state.evaluation = evaluate_rag_system_deepseek(original_query, refined_query, retrieved_texts, final_answer)
+
+    # Display evaluation results if they exist in session state.
+    if st.session_state.evaluation:
+        st.subheader("Evaluation Results")
+        evaluation = st.session_state.evaluation
+        if "error" in evaluation:
+            st.error(evaluation["error"])
+        else:
+            st.metric("Accuracy Score", evaluation.get("accuracy_score", "N/A"))
+            st.write("Accuracy Comments:", evaluation.get("accuracy_comments", "N/A"))
+            st.metric("Relevance Score", evaluation.get("relevance_score", "N/A"))
+            st.write("Relevance Comments:", evaluation.get("relevance_comments", "N/A"))
+            st.metric("Clarity Score", evaluation.get("clarity_score", "N/A"))
+            st.write("Clarity Comments:", evaluation.get("clarity_comments", "N/A"))
+            st.metric("Overall Score", evaluation.get("overall_score", "N/A"))
+            st.write("Overall Comments:", evaluation.get("overall_comments", "N/A"))
+            with st.expander("Show Raw Evaluation JSON"):
+                st.json(evaluation)
 
 if __name__ == "__main__":
     main()
